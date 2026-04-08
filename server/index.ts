@@ -143,17 +143,29 @@ process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 let tunnelProcess: ChildProcess | null = null;
 
-function startTunnel(port: number) {
+function startTunnel() {
   try {
-    const cf = spawn("cloudflared", ["tunnel", "--url", `http://localhost:${port}`], {
+    // Use named tunnel if config exists, otherwise fall back to quick tunnel
+    const hasConfig = existsSync(path.join(process.env.HOME ?? "~", ".cloudflared/config.yml"));
+    const args = hasConfig
+      ? ["tunnel", "run"]
+      : ["tunnel", "--url", `http://localhost:${PORT}`];
+
+    const cf = spawn("cloudflared", args, {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
     cf.stderr?.on("data", (data: Buffer) => {
       const line = data.toString();
+      // Quick tunnel URL
       const urlMatch = line.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
       if (urlMatch) {
         app.log.info(`Tunnel URL: ${urlMatch[0]}`);
+      }
+      // Named tunnel connected
+      if (line.includes("Registered tunnel connection")) {
+        const domain = process.env.TUNNEL_DOMAIN;
+        app.log.info(domain ? `Tunnel connected: https://${domain}` : "Tunnel connected");
       }
     });
 
@@ -180,7 +192,7 @@ try {
 
   // Start Cloudflare tunnel for remote access
   if (process.env.NO_TUNNEL !== "1") {
-    startTunnel(PORT);
+    startTunnel();
   }
 
   // Start pre-fetching in background (don't block startup)

@@ -211,9 +211,9 @@ export async function findRelatedSeasons(
 
   const familyGroup = getSeriesGroupInfo(baseName, showName).key;
   if (["naruto", "naruto shippuden", "boruto", "naruto extras"].includes(familyGroup)) {
-    const narutoTerms = ["Naruto", "Naruto Shippuden", "Boruto", "Road of Naruto"];
+    const narutoTerms = ["NARUTO -ナルト-", "Naruto Shippuden", "Boruto", "Road of Naruto"];
     const narutoResults = await Promise.all(
-      narutoTerms.map((term) => searchAnime(term, mode, 1, 12))
+      narutoTerms.map((term) => searchAnime(term, mode, 1, 40))
     );
 
     const narutoOrder: Record<string, number> = {

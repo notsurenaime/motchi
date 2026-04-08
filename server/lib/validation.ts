@@ -45,6 +45,16 @@ export function sanitizeFileNameSegment(value: string, maxLength = 120): string 
   );
 }
 
+/** Escape SQL LIKE special characters so user input is treated literally. */
+export function escapeLikePattern(value: string): string {
+  return value.replace(/[%_\\]/g, (ch) => `\\${ch}`);
+}
+
+/** Validate that mode is "sub" or "dub", defaulting to "sub". */
+export function validateMode(value: unknown): "sub" | "dub" {
+  return value === "dub" ? "dub" : "sub";
+}
+
 export function isAllowedProxyUrl(rawUrl: string, allowedHosts: string[]) {
   let parsedUrl: URL;
   try {

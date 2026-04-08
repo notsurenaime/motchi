@@ -14,9 +14,12 @@ import { animeCache } from "../db/schema.js";
 import { desc, like, inArray } from "drizzle-orm";
 import { getCurrentTrendingAnime } from "../services/trending.js";
 import {
+  escapeLikePattern,
   isAllowedProxyUrl,
+  isValidEpisodeNumber,
   normalizeText,
   parsePositiveInt,
+  validateMode,
 } from "../lib/validation.js";
 
 export async function animeRoutes(app: FastifyInstance) {
@@ -89,18 +92,19 @@ export async function animeRoutes(app: FastifyInstance) {
   app.get<{ Querystring: { q: string; mode?: "sub" | "dub" } }>(
     "/api/anime/search",
     async (req, reply) => {
-      const { q, mode = "sub" } = req.query;
+      const { q } = req.query;
       if (!q || q.trim().length === 0) {
         return reply.status(400).send({ error: "Query parameter 'q' required" });
       }
 
       const term = q.trim().slice(0, 100);
+      const mode = validateMode(req.query.mode);
 
       // Search local cache first
       const cached = db
         .select()
         .from(animeCache)
-        .where(like(animeCache.name, `%${term}%`))
+        .where(like(animeCache.name, `%${escapeLikePattern(term)}%`))
         .orderBy(desc(animeCache.rating))
         .limit(40)
         .all();
@@ -233,9 +237,10 @@ export async function animeRoutes(app: FastifyInstance) {
   // Get anime detail
   app.get<{ Params: { id: string }; Querystring: { mode?: "sub" | "dub" } }>(
     "/api/anime/:id",
-    async (req) => {
-      const { id } = req.params;
-      const { mode = "sub" } = req.query;
+    async (req, reply) => {
+      const id = normalizeText(req.params.id, 80);
+      if (!id) return reply.status(400).send({ error: "Invalid anime id" });
+      const mode = validateMode(req.query.mode);
       const detail = await getAnimeDetail(id, mode);
       return detail;
     }
@@ -244,9 +249,10 @@ export async function animeRoutes(app: FastifyInstance) {
   // Get related seasons for an anime
   app.get<{ Params: { id: string }; Querystring: { mode?: "sub" | "dub" } }>(
     "/api/anime/:id/seasons",
-    async (req) => {
-      const { id } = req.params;
-      const { mode = "sub" } = req.query;
+    async (req, reply) => {
+      const id = normalizeText(req.params.id, 80);
+      if (!id) return reply.status(400).send({ error: "Invalid anime id" });
+      const mode = validateMode(req.query.mode);
       const detail = await getAnimeDetail(id, mode);
       const seasons = await findRelatedSeasons(detail.name, mode);
       return seasons;
@@ -257,9 +263,12 @@ export async function animeRoutes(app: FastifyInstance) {
   app.get<{
     Params: { id: string; episode: string };
     Querystring: { mode?: "sub" | "dub" };
-  }>("/api/anime/:id/episode/:episode/streams", async (req) => {
-    const { id, episode } = req.params;
-    const { mode = "sub" } = req.query;
+  }>("/api/anime/:id/episode/:episode/streams", async (req, reply) => {
+    const id = normalizeText(req.params.id, 80);
+    if (!id) return reply.status(400).send({ error: "Invalid anime id" });
+    if (!isValidEpisodeNumber(req.params.episode)) return reply.status(400).send({ error: "Invalid episode number" });
+    const episode = req.params.episode.trim();
+    const mode = validateMode(req.query.mode);
     const streams = await getEpisodeStreams(id, episode, mode);
     return streams;
   });
@@ -269,8 +278,12 @@ export async function animeRoutes(app: FastifyInstance) {
     Params: { id: string; episode: string };
     Querystring: { quality?: string; mode?: "sub" | "dub" };
   }>("/api/anime/:id/episode/:episode/play", async (req, reply) => {
-    const { id, episode } = req.params;
-    const { quality = "1080p", mode = "sub" } = req.query;
+    const id = normalizeText(req.params.id, 80);
+    if (!id) return reply.status(400).send({ error: "Invalid anime id" });
+    if (!isValidEpisodeNumber(req.params.episode)) return reply.status(400).send({ error: "Invalid episode number" });
+    const episode = req.params.episode.trim();
+    const mode = validateMode(req.query.mode);
+    const quality = normalizeText(req.query.quality ?? "1080p", 10) ?? "1080p";
     const best = await getBestStreamUrl(id, episode, quality, mode);
     if (!best) {
       return reply.status(404).send({ error: "No streams found" });

@@ -72,7 +72,7 @@ export async function historyRoutes(app: FastifyInstance) {
         .from(watchHistory)
         .where(eq(watchHistory.profileId, profileId))
         .orderBy(desc(watchHistory.updatedAt))
-        .limit(100)
+        .limit(500)
         .all();
 
       // Deduplicate: keep only the most recent episode per series (not per animeId,
@@ -157,11 +157,12 @@ export async function historyRoutes(app: FastifyInstance) {
       .get();
 
     if (existing) {
+      const now = new Date();
       db.update(watchHistory)
-        .set({ progress: safeProgress, duration, updatedAt: new Date() })
+        .set({ progress: safeProgress, duration, updatedAt: now })
         .where(eq(watchHistory.id, existing.id))
         .run();
-      return { ...existing, progress: safeProgress, duration };
+      return { ...existing, progress: safeProgress, duration, updatedAt: now };
     } else {
       return db
         .insert(watchHistory)
