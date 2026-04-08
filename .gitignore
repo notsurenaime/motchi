@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Database
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Downloads
+downloads/
+
+# Drizzle migrations
+drizzle/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
