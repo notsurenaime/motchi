@@ -19,6 +19,7 @@ A self-hosted anime streaming server with a clean, modern UI. Built for personal
 - **Trending** — Live trending data from AniList
 - **Responsive** — Works on desktop, tablet, and mobile with a bottom tab bar
 - **Self-Hosted** — Runs on your own machine, no cloud required
+- **Remote Access** — Built-in Cloudflare tunnel for access from anywhere (phone, vacation, etc.)
 
 ## Tech Stack
 
@@ -45,6 +46,8 @@ npm run dev
 
 The app will be available at `http://localhost:3000`. The API server runs on port `3001`.
 
+A Cloudflare tunnel starts automatically, giving you a public URL (printed in the terminal) for phone/remote access. Requires [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) to be installed. Set `NO_TUNNEL=1` to disable.
+
 ## Production Build
 
 ```bash
@@ -52,7 +55,13 @@ The app will be available at `http://localhost:3000`. The API server runs on por
 npm run build
 
 # Run the compiled server (serves both API and static frontend)
-node dist/server/index.js
+npm start
+
+# Or run directly with tsx (no build needed)
+PORT=3000 npx tsx server/index.ts
+
+# Disable the Cloudflare tunnel
+NO_TUNNEL=1 npm start
 ```
 
 ## Docker
@@ -77,6 +86,7 @@ Access at `http://localhost:3001`.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `3001` | Server port |
+| `NO_TUNNEL` | — | Set to `1` to disable the Cloudflare tunnel |
 
 Copy `.env.example` to `.env` to customize.
 
@@ -103,6 +113,7 @@ motchi/
 |---------|-------------|
 | `npm run dev` | Start frontend + backend in development mode |
 | `npm run build` | Build for production |
+| `npm start` | Run production server |
 | `npm run lint` | Type-check with TypeScript |
 | `npm run db:generate` | Generate Drizzle migrations |
 | `npm run db:migrate` | Run database migrations |

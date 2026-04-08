@@ -4,6 +4,7 @@ import fastifyStatic from "@fastify/static";
 import path from "path";
 import { fileURLToPath } from "url";
 import { existsSync, readFileSync } from "fs";
+import { spawn, type ChildProcess } from "child_process";
 
 // Initialize database (runs migrations)
 import "./db/migrate.js";
@@ -65,12 +66,29 @@ app.setErrorHandler(async (error, request, reply) => {
 // CORS for dev
 await app.register(cors, { origin: true });
 
-// Serve downloaded files
+// Detect if built frontend is available
+// __dirname in dev (tsx): <root>/server, in prod (compiled): <root>/dist/server
+const clientDirCandidates = [
+  path.resolve(__dirname, "../client"),         // compiled: dist/server -> dist/client
+  path.resolve(__dirname, "../dist/client"),     // dev (tsx): server -> dist/client
+];
+const resolvedClientDir = clientDirCandidates.find((d) => existsSync(d)) ?? null;
+
+// Serve downloaded files (first registration decorates reply)
 await app.register(fastifyStatic, {
   root: path.resolve("./downloads"),
   prefix: "/downloads/",
-  decorateReply: false,
 });
+
+// If we have a built frontend, add it as an additional root
+if (resolvedClientDir) {
+  app.log.info(`Serving frontend from ${resolvedClientDir}`);
+  await app.register(fastifyStatic, {
+    root: resolvedClientDir,
+    prefix: "/",
+    decorateReply: false,
+  });
+}
 
 // Register routes
 await app.register(animeRoutes);
@@ -87,20 +105,8 @@ app.get("/api/health", async () => ({
   name: "Motchi",
 }));
 
-// In production, serve the built frontend
-// __dirname in dev: <root>/server, in prod: <root>/dist/server
-const clientDir = path.resolve(__dirname, "../client");
-const clientDirAlt = path.resolve(__dirname, "../../dist/client");
-const resolvedClientDir = existsSync(clientDir) ? clientDir : existsSync(clientDirAlt) ? clientDirAlt : null;
-
+// SPA fallback or 404
 if (resolvedClientDir) {
-  await app.register(fastifyStatic, {
-    root: resolvedClientDir,
-    prefix: "/",
-    decorateReply: false,
-  });
-
-  // SPA fallback: serve index.html for all non-API, non-file routes
   const indexHtml = readFileSync(path.join(resolvedClientDir, "index.html"), "utf-8");
   app.setNotFoundHandler(async (request, reply) => {
     if (request.url.startsWith("/api/") || request.url.startsWith("/downloads/")) {
@@ -120,6 +126,10 @@ const PORT = parseInt(process.env.PORT ?? "3001");
 async function shutdown(signal: string) {
   app.log.info({ signal }, "Shutting down server");
   try {
+    if (tunnelProcess) {
+      tunnelProcess.kill();
+      tunnelProcess = null;
+    }
     await app.close();
     process.exit(0);
   } catch (error) {
@@ -131,9 +141,47 @@ async function shutdown(signal: string) {
 process.once("SIGINT", () => void shutdown("SIGINT"));
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
+let tunnelProcess: ChildProcess | null = null;
+
+function startTunnel(port: number) {
+  try {
+    const cf = spawn("cloudflared", ["tunnel", "--url", `http://localhost:${port}`], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    cf.stderr?.on("data", (data: Buffer) => {
+      const line = data.toString();
+      const urlMatch = line.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
+      if (urlMatch) {
+        app.log.info(`Tunnel URL: ${urlMatch[0]}`);
+      }
+    });
+
+    cf.on("error", (err) => {
+      app.log.warn(`Cloudflare tunnel not available: ${err.message}`);
+    });
+
+    cf.on("exit", (code) => {
+      if (code !== null && code !== 0) {
+        app.log.warn(`Cloudflare tunnel exited with code ${code}`);
+      }
+      tunnelProcess = null;
+    });
+
+    tunnelProcess = cf;
+  } catch {
+    app.log.warn("cloudflared not installed — skipping tunnel");
+  }
+}
+
 try {
   await app.listen({ port: PORT, host: "0.0.0.0" });
   app.log.info(`Motchi server running on http://localhost:${PORT}`);
+
+  // Start Cloudflare tunnel for remote access
+  if (process.env.NO_TUNNEL !== "1") {
+    startTunnel(PORT);
+  }
 
   // Start pre-fetching in background (don't block startup)
   void prefetchPopularAnime().catch((error) => {

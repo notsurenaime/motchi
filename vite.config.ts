@@ -15,6 +15,7 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    host: true,
     // Prevent the Vite dev client from full-reloading the page during playback.
     hmr: false,
     proxy: {
