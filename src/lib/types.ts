@@ -19,6 +19,14 @@ export interface AnimeDetail {
   genres?: string[];
   rating?: number;
   episodes: string[];
+  episodeDetails?: EpisodeDetail[];
+}
+
+export interface EpisodeDetail {
+  episode: string;
+  title?: string;
+  description?: string;
+  image?: string;
 }
 
 export interface SeasonInfo {
@@ -70,6 +78,30 @@ export interface DownloadItem {
   createdAt: string;
 }
 
+export type DeviceDownloadStatus =
+  | "pending"
+  | "downloading"
+  | "complete"
+  | "error"
+  | "deleting";
+
+export interface DeviceDownloadItem {
+  id: string;
+  animeId: string;
+  animeName: string;
+  animeImage?: string;
+  episodeNumber: string;
+  episodeTitle?: string;
+  episodeImage?: string;
+  episodeDescription?: string;
+  status: DeviceDownloadStatus;
+  progress: number;
+  fileSize?: number | null;
+  mimeType?: string | null;
+  errorMessage?: string | null;
+  createdAt: string;
+}
+
 export interface SkipTime {
   type: "op" | "ed" | "mixed-op" | "mixed-ed" | "recap";
   startTime: number;
@@ -93,6 +125,7 @@ export interface BrowseAnimeResponse {
   items: CachedAnime[];
   page: number;
   hasMore: boolean;
+  totalAvailable: number;
 }
 
 export interface WatchlistItem {

@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { Play, Info } from "lucide-react";
 import type { CachedAnime } from "@/lib/types";
+import { formatTextContent } from "@/lib/text";
 
 interface HeroBannerProps {
   anime: CachedAnime;
@@ -16,6 +17,7 @@ export default function HeroBanner({
   onSelect,
 }: HeroBannerProps) {
   const bgImage = anime.bannerUrl || anime.imageUrl;
+  const description = formatTextContent(anime.description);
 
   return (
     <div className="relative h-[56vh] sm:h-[70vh] min-h-[350px] sm:min-h-[500px] overflow-hidden animate-fade-in">
@@ -62,9 +64,9 @@ export default function HeroBanner({
           ))}
         </div>
 
-        {anime.description && (
+        {description && (
           <p className="text-zinc-300 text-xs sm:text-sm md:text-base line-clamp-2 sm:line-clamp-3 max-w-2xl">
-            {anime.description.replace(/<[^>]*>/g, "").slice(0, 300)}
+            {description.slice(0, 300)}
           </p>
         )}
 

@@ -20,7 +20,7 @@ export default function Layout({ children, onSwitchProfile }: LayoutProps) {
     { to: "/", icon: Home, label: "Home" },
     { to: "/browse", icon: Compass, label: "Browse" },
     { to: "/watchlist", icon: Heart, label: "Watchlist" },
-    { to: "/downloads", icon: Download, label: "Downloads" },
+    { to: "/device-downloads", icon: Download, label: "Downloads" },
   ];
 
   const isActive = (to: string) =>

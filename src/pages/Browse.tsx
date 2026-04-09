@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+import { Compass, Search } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
 import AnimeCard from "@/components/AnimeCard";
 import SkeletonCard from "@/components/SkeletonCard";
@@ -26,15 +27,36 @@ const GENRES = [
 ];
 
 export default function Browse() {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedGenre, setSelectedGenre] = useState<string>("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialSearchQuery = searchParams.get("q") ?? "";
+  const initialGenre = searchParams.get("genre") ?? "";
+  const [searchQuery, setSearchQuery] = useState(initialSearchQuery);
+  const [selectedGenre, setSelectedGenre] = useState<string>(initialGenre);
+  const [debouncedQuery, setDebouncedQuery] = useState(initialSearchQuery);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const isSearching = debouncedQuery.trim().length >= 2;
 
   useEffect(() => {
     return () => clearTimeout(debounceRef.current);
   }, []);
+
+  useEffect(() => {
+    const nextParams = new URLSearchParams();
+    if (searchQuery) {
+      nextParams.set("q", searchQuery);
+    }
+    if (selectedGenre) {
+      nextParams.set("genre", selectedGenre);
+    }
+
+    const currentQuery = searchParams.get("q") ?? "";
+    const currentGenre = searchParams.get("genre") ?? "";
+    if (currentQuery === searchQuery && currentGenre === selectedGenre) {
+      return;
+    }
+
+    setSearchParams(nextParams, { replace: true });
+  }, [searchParams, searchQuery, selectedGenre, setSearchParams]);
 
   const getCardImage = (anime: AnimeSearchResult | CachedAnime) => {
     if (isSearchResult(anime)) {
@@ -73,12 +95,25 @@ export default function Browse() {
   });
 
   const browseResults = browsePages?.pages.flatMap((page) => page.items) ?? [];
+  const totalAvailable = Math.max(
+    browsePages?.pages[0]?.totalAvailable ?? 0,
+    browseResults.length
+  );
   const items = isSearching ? searchResults ?? [] : browseResults;
   const loading = isSearching ? searchLoading : browseLoading;
+  const browseSummary = isSearching
+    ? `${items.length} result${items.length === 1 ? "" : "s"} for \"${debouncedQuery}\"`
+    : `${totalAvailable.toLocaleString()} anime available in the library${selectedGenre ? `, filtered by ${selectedGenre}` : ""}`;
 
   return (
     <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-8">
-      <h1 className="text-2xl font-bold text-white mb-6">Browse</h1>
+      <div className="mb-6">
+        <div className="mb-2 flex items-center gap-3">
+          <Compass size={24} className="text-rose-400" />
+          <h1 className="text-2xl font-bold text-white">Browse</h1>
+        </div>
+        <p className="text-sm text-zinc-400">{browseSummary}</p>
+      </div>
 
       {/* Search */}
       <div className="relative mb-6">

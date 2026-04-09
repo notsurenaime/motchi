@@ -1,9 +1,11 @@
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Play, Star, ArrowLeft, Heart } from "lucide-react";
 import { api } from "@/lib/api";
+import { useDownloads } from "@/components/DownloadsProvider";
 import EpisodeList from "@/components/EpisodeList";
+import { formatTextContent } from "@/lib/text";
 
 interface DetailProps {
   profileId: number;
@@ -13,6 +15,7 @@ export default function Detail({ profileId }: DetailProps) {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<"sub" | "dub">("sub");
+  const { downloads, startDownload, openDownload } = useDownloads();
 
   const { data: anime, isLoading } = useQuery({
     queryKey: ["anime-detail", id, mode],
@@ -51,12 +54,55 @@ export default function Detail({ profileId }: DetailProps) {
     },
   });
 
+  const episodeDetailsByEpisode = useMemo(
+    () =>
+      new Map(
+        (anime?.episodeDetails ?? []).map((episodeDetail) => [
+          episodeDetail.episode,
+          episodeDetail,
+        ])
+      ),
+    [anime?.episodeDetails]
+  );
+
+  const episodeDownloads = useMemo(
+    () =>
+      Object.fromEntries(
+        downloads
+          .filter((download) => download.animeId === anime?.id)
+          .map((download) => [download.episodeNumber, download])
+      ),
+    [anime?.id, downloads]
+  );
+
   const handleDownload = async (episode: string) => {
     if (!anime) return;
     try {
-      await api.startDownload(anime.id, anime.name, episode);
+      const episodeDetail = episodeDetailsByEpisode.get(episode);
+      await startDownload({
+        animeId: anime.id,
+        animeName: anime.name,
+        animeImage: anime.thumbnail,
+        episodeNumber: episode,
+        episodeTitle: episodeDetail?.title,
+        episodeImage: episodeDetail?.image,
+        episodeDescription: episodeDetail?.description,
+      });
     } catch (err: any) {
       console.error("Download failed:", err.message);
+    }
+  };
+
+  const handleOpenDownload = async (episode: string) => {
+    const download = episodeDownloads[episode];
+    if (!download) {
+      return;
+    }
+
+    try {
+      await openDownload(download.id);
+    } catch (error) {
+      console.error("Failed to open local download", error);
     }
   };
 
@@ -80,6 +126,7 @@ export default function Detail({ profileId }: DetailProps) {
   }
 
   const animeHistory = history.filter((entry) => entry.animeId === anime.id);
+  const description = formatTextContent(anime.description);
   const lastWatched = animeHistory.reduce<(typeof animeHistory)[number] | undefined>(
     (latest, entry) => {
       if (!latest) {
@@ -186,9 +233,9 @@ export default function Detail({ profileId }: DetailProps) {
               </div>
             )}
 
-            {anime.description && (
+            {description && (
               <p className="text-zinc-300 text-sm leading-relaxed max-w-3xl">
-                {anime.description.replace(/<[^>]*>/g, "")}
+                {description}
               </p>
             )}
 
@@ -273,9 +320,12 @@ export default function Detail({ profileId }: DetailProps) {
             animeId={anime.id}
             animeName={anime.name}
             episodes={anime.episodes}
+            episodeDetails={anime.episodeDetails}
+            episodeDownloads={episodeDownloads}
             currentEpisode={lastWatched?.episodeNumber}
             episodeProgress={episodeProgress}
             onDownload={handleDownload}
+            onOpenDownload={handleOpenDownload}
           />
         )}
       </div>

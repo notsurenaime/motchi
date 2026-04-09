@@ -17,9 +17,21 @@ const SEARCH_GQL = `query( $search: SearchInput $limit: Int $page: Int $translat
 
 const EPISODES_LIST_GQL = `query ($showId: String!) { show( _id: $showId ) { _id availableEpisodesDetail }}`;
 
+const EPISODE_INFO_GQL = `query ($showId: String!, $episodeNumStart: Float!, $episodeNumEnd: Float!) { episodeInfos(showId: $showId, episodeNumStart: $episodeNumStart, episodeNumEnd: $episodeNumEnd) { episodeIdNum notes description thumbnails } }`;
+
 const EPISODE_EMBED_GQL = `query ($showId: String!, $translationType: VaildTranslationTypeEnumType!, $episodeString: String!) { episode( showId: $showId translationType: $translationType episodeString: $episodeString ) { episodeString sourceUrls }}`;
 
 const SHOW_DETAIL_GQL = `query ($showId: String!) { show( _id: $showId ) { _id name thumbnail description airedStart status availableEpisodes genres __typename } }`;
+
+const COUNT_GQL = `query( $search: SearchInput $limit: Int $page: Int $translationType: VaildTranslationTypeEnumType $countryOrigin: VaildCountryOriginEnumType ) { shows( search: $search limit: $limit page: $page translationType: $translationType countryOrigin: $countryOrigin ) { pageInfo { hasNextPage nextPage } edges { _id } } }`;
+
+const COUNT_SEASONS = ["Winter", "Spring", "Summer", "Fall"] as const;
+const COUNT_TYPES = ["TV", "Movie", "ONA", "OVA", "Special", "PV"] as const;
+const COUNT_START_YEAR = 1917;
+const COUNT_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
+
+let animeCatalogTotalCache: { total: number; expiresAt: number } | null = null;
+let animeCatalogTotalPromise: Promise<number> | null = null;
 
 export interface AnimeSearchResult {
   id: string;
@@ -42,7 +54,15 @@ export interface AnimeDetail {
   genres?: string[];
   rating?: number;
   episodes: string[];
+  episodeDetails?: EpisodeDetail[];
   seasons?: SeasonInfo[];
+}
+
+export interface EpisodeDetail {
+  episode: string;
+  title?: string;
+  description?: string;
+  image?: string;
 }
 
 export interface SeasonInfo {
@@ -74,6 +94,201 @@ async function gqlRequest(query: string, variables: Record<string, unknown>) {
   return res.json();
 }
 
+async function fetchCatalogPartitionIds(
+  search: Record<string, unknown>,
+  mode: "sub" | "dub" = "sub"
+) {
+  let page = 1;
+  const ids = new Set<string>();
+
+  while (true) {
+    const data = await gqlRequest(COUNT_GQL, {
+      search,
+      limit: 40,
+      page,
+      translationType: mode,
+      countryOrigin: "ALL",
+    });
+
+    const shows = data?.data?.shows;
+    const edges = shows?.edges ?? [];
+    for (const edge of edges) {
+      if (edge?._id) {
+        ids.add(edge._id);
+      }
+    }
+
+    if (!shows?.pageInfo?.hasNextPage || !shows?.pageInfo?.nextPage) {
+      break;
+    }
+
+    page = shows.pageInfo.nextPage;
+  }
+
+  return ids;
+}
+
+async function computeAnimeCatalogTotal(mode: "sub" | "dub" = "sub") {
+  const ids = new Set<string>();
+  const currentYear = new Date().getFullYear() + 1;
+
+  for (let year = COUNT_START_YEAR; year <= currentYear; year += 1) {
+    const baseSearch = {
+      allowAdult: false,
+      allowUnknown: false,
+      query: "",
+      year,
+    };
+    const yearIds = await fetchCatalogPartitionIds(baseSearch, mode);
+
+    if (yearIds.size === 0) {
+      continue;
+    }
+
+    if (yearIds.size < 80) {
+      for (const id of yearIds) {
+        ids.add(id);
+      }
+      continue;
+    }
+
+    for (const type of COUNT_TYPES) {
+      const typeIds = await fetchCatalogPartitionIds(
+        {
+          ...baseSearch,
+          types: [type],
+        },
+        mode
+      );
+
+      if (typeIds.size === 0) {
+        continue;
+      }
+
+      if (typeIds.size < 80) {
+        for (const id of typeIds) {
+          ids.add(id);
+        }
+        continue;
+      }
+
+      for (const season of COUNT_SEASONS) {
+        const seasonTypeIds = await fetchCatalogPartitionIds(
+          {
+            ...baseSearch,
+            season,
+            types: [type],
+          },
+          mode
+        );
+
+        for (const id of seasonTypeIds) {
+          ids.add(id);
+        }
+      }
+    }
+  }
+
+  return ids.size;
+}
+
+export async function getAnimeCatalogTotal(mode: "sub" | "dub" = "sub") {
+  const now = Date.now();
+  if (animeCatalogTotalCache && animeCatalogTotalCache.expiresAt > now) {
+    return animeCatalogTotalCache.total;
+  }
+
+  if (animeCatalogTotalPromise) {
+    return animeCatalogTotalPromise;
+  }
+
+  animeCatalogTotalPromise = computeAnimeCatalogTotal(mode)
+    .then((total) => {
+      animeCatalogTotalCache = {
+        total,
+        expiresAt: Date.now() + COUNT_CACHE_TTL_MS,
+      };
+      return total;
+    })
+    .finally(() => {
+      animeCatalogTotalPromise = null;
+    });
+
+  return animeCatalogTotalPromise;
+}
+
+function resolveImageUrl(url?: string) {
+  if (!url) return undefined;
+  return url.startsWith("http")
+    ? url
+    : `https://wp.youtube-anime.com/aln.youtube-anime.com/${url.replace(/^\//, "")}`;
+}
+
+function getEpisodeTitle(notes?: string) {
+  if (!notes) return undefined;
+  const [title] = notes.split("<note-split>");
+  const normalizedTitle = title?.trim();
+  return normalizedTitle ? normalizedTitle : undefined;
+}
+
+function getPreferredEpisodeImage(
+  thumbnails: string[] | undefined,
+  mode: "sub" | "dub"
+) {
+  if (!thumbnails?.length) return undefined;
+
+  const preferred = thumbnails.find((thumbnail) =>
+    thumbnail.toLowerCase().includes(`_${mode}.`)
+  );
+
+  return resolveImageUrl(preferred ?? thumbnails[0]);
+}
+
+async function getEpisodeDetails(
+  showId: string,
+  episodes: string[],
+  mode: "sub" | "dub"
+): Promise<EpisodeDetail[]> {
+  const numericEpisodeMap = new Map<number, string>();
+
+  for (const episode of episodes) {
+    const episodeNumber = Number(episode);
+    if (Number.isFinite(episodeNumber)) {
+      numericEpisodeMap.set(episodeNumber, episode);
+    }
+  }
+
+  if (numericEpisodeMap.size === 0) {
+    return [];
+  }
+
+  const numericEpisodes = Array.from(numericEpisodeMap.keys()).sort((a, b) => a - b);
+  const episodeInfoData = await gqlRequest(EPISODE_INFO_GQL, {
+    showId,
+    episodeNumStart: numericEpisodes[0],
+    episodeNumEnd: numericEpisodes[numericEpisodes.length - 1],
+  });
+
+  const episodeDetailsByEpisode = new Map<string, EpisodeDetail>();
+  const episodeInfos = episodeInfoData?.data?.episodeInfos ?? [];
+  for (const episodeInfo of episodeInfos) {
+    const episodeNumber = Number(episodeInfo.episodeIdNum);
+    const originalEpisode = numericEpisodeMap.get(episodeNumber);
+    if (!originalEpisode) continue;
+
+    episodeDetailsByEpisode.set(originalEpisode, {
+      episode: originalEpisode,
+      title: getEpisodeTitle(episodeInfo.notes),
+      description: episodeInfo.description ?? undefined,
+      image: getPreferredEpisodeImage(episodeInfo.thumbnails, mode),
+    });
+  }
+
+  return episodes
+    .map((episode) => episodeDetailsByEpisode.get(episode))
+    .filter((episode): episode is EpisodeDetail => Boolean(episode));
+}
+
 /**
  * Search for anime by query string
  */
@@ -95,11 +310,7 @@ export async function searchAnime(
   return edges.map((edge: any) => ({
     id: edge._id,
     name: edge.name,
-    thumbnail: edge.thumbnail
-      ? edge.thumbnail.startsWith("http")
-        ? edge.thumbnail
-        : `https://wp.youtube-anime.com/aln.youtube-anime.com/${edge.thumbnail}`
-      : undefined,
+    thumbnail: resolveImageUrl(edge.thumbnail),
     description: edge.description,
     status: edge.status,
     episodeCount: edge.availableEpisodes?.[mode] ?? 0,
@@ -127,15 +338,23 @@ export async function getAnimeDetail(
   const sortedEpisodes = episodeList.sort(
     (a: string, b: string) => parseFloat(a) - parseFloat(b)
   );
+  const seriesGroup = getSeriesGroupInfo(
+    extractBaseName(show.name ?? ""),
+    show.name ?? ""
+  );
+  const displayName = ["naruto", "naruto shippuden", "naruto extras", "boruto"].includes(
+    seriesGroup.key
+  )
+    ? seriesGroup.displayName
+    : show.name;
+  const episodeDetails = await getEpisodeDetails(showId, sortedEpisodes, mode).catch(
+    () => []
+  );
 
   return {
     id: show._id,
-    name: show.name,
-    thumbnail: show.thumbnail
-      ? show.thumbnail.startsWith("http")
-        ? show.thumbnail
-        : `https://wp.youtube-anime.com/aln.youtube-anime.com/${show.thumbnail}`
-      : undefined,
+    name: displayName,
+    thumbnail: resolveImageUrl(show.thumbnail),
     banner: undefined,
     description: show.description,
     status: show.status,
@@ -143,6 +362,7 @@ export async function getAnimeDetail(
     genres: show.genres ?? [],
     rating: undefined,
     episodes: sortedEpisodes,
+    episodeDetails,
   };
 }
 
@@ -217,10 +437,10 @@ export async function findRelatedSeasons(
     );
 
     const narutoOrder: Record<string, number> = {
-      naruto: 1,
+      "naruto extras": 1,
       "naruto shippuden": 2,
-      boruto: 3,
-      "naruto extras": 4,
+      naruto: 3,
+      boruto: 4,
     };
     const grouped = new Map<string, SeasonInfo>();
 

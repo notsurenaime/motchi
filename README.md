@@ -6,7 +6,7 @@ A self-hosted anime streaming server with a clean, modern UI. Built for personal
 
 ## Features
 
-- **Search & Browse** — Find anime by name or browse by genre with infinite scroll
+- **Search & Browse** — Find anime by name or browse by genre with infinite scroll, persistent filters, and a live library count
 - **Video Playback** — HLS and MP4 streaming with a custom player, playback speed control, and keyboard shortcuts
 - **Skip OP/ED** — Automatic opening and ending skip detection via AniSkip
 - **Sub/Dub Toggle** — Switch between sub and dub on any anime
@@ -14,7 +14,8 @@ A self-hosted anime streaming server with a clean, modern UI. Built for personal
 - **Continue Watching** — Homepage row shows your in-progress series
 - **Profiles** — Multiple profiles with optional PIN protection for family use
 - **Watchlist** — Save anime for later from any page
-- **Downloads** — Download episodes for offline viewing
+- **Device-Local Downloads** — Save episodes into browser storage for offline viewing on the same device, with grouped download management and retry/delete states
+- **Episode Metadata** — Episode artwork, titles, and descriptions on detail and downloads pages when upstream data is available
 - **Season Navigation** — Automatically groups and links related seasons
 - **Trending** — Live trending data from AniList
 - **Responsive** — Works on desktop, tablet, and mobile with a bottom tab bar
@@ -46,6 +47,8 @@ npm run dev
 
 The app will be available at `http://localhost:3000`. The API server runs on port `3001`.
 
+Offline downloads are stored in the browser using IndexedDB, so they only appear on the device and browser profile where the download was created.
+
 A Cloudflare tunnel starts automatically, giving you a public URL (printed in the terminal) for phone/remote access. Requires [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) to be installed. Set `NO_TUNNEL=1` to disable.
 
 ## Production Build
@@ -75,7 +78,6 @@ docker run -d \
   --name motchi \
   -p 3001:3001 \
   -v motchi-data:/app/data \
-  -v motchi-downloads:/app/downloads \
   motchi
 ```
 
@@ -100,11 +102,10 @@ motchi/
 │   ├── services/        # Anime data, trending, skip times
 │   └── lib/             # Shared validation helpers
 ├── src/                 # React frontend
-│   ├── components/      # Reusable UI components
+│   ├── components/      # Reusable UI components, player, downloads provider
 │   ├── pages/           # Route pages
-│   └── lib/             # API client, types
-├── data/                # SQLite database (auto-created)
-└── downloads/           # Downloaded episodes (auto-created)
+│   └── lib/             # API client, types, text formatting helpers
+└── data/                # SQLite database (auto-created)
 ```
 
 ## Scripts

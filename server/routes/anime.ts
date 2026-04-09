@@ -5,6 +5,7 @@ import {
   getAnimeDetail,
   getEpisodeStreams,
   getBestStreamUrl,
+  getAnimeCatalogTotal,
   findRelatedSeasons,
   extractBaseName,
 } from "../services/anime-bridge.js";
@@ -29,6 +30,94 @@ export async function animeRoutes(app: FastifyInstance) {
     "repackager.wixmp.com",
     "allanime.day",
   ];
+  const narutoSearchOrder: Record<string, number> = {
+    "naruto extras": 1,
+    "naruto shippuden": 2,
+    naruto: 3,
+    boruto: 4,
+  };
+
+  const getPreferredEpisodeCount = (
+    liveCount?: number,
+    cachedCount?: number | null
+  ) => {
+    if (typeof liveCount === "number" && liveCount > 0) {
+      return liveCount;
+    }
+
+    return cachedCount ?? 0;
+  };
+
+  const parseGenres = (genres: string | null, fallback: string[] = []) => {
+    if (!genres) {
+      return fallback;
+    }
+
+    try {
+      return JSON.parse(genres) as string[];
+    } catch {
+      return fallback;
+    }
+  };
+
+  const formatUpstreamSearchEntry = (
+    entry: Awaited<ReturnType<typeof searchAnime>>[number],
+    cached?: typeof animeCache.$inferSelect,
+    overrides?: Partial<{
+      id: string;
+      name: string;
+      thumbnail?: string;
+      description?: string;
+      status?: string;
+      episodeCount: number;
+      genres: string[];
+    }>
+  ) => ({
+    id: overrides?.id ?? entry.id,
+    name: overrides?.name ?? entry.name,
+    thumbnail: overrides?.thumbnail ?? cached?.imageUrl ?? entry.thumbnail,
+    description: overrides?.description ?? cached?.description ?? entry.description,
+    status: overrides?.status ?? cached?.status ?? entry.status,
+    episodeCount:
+      overrides?.episodeCount ??
+      getPreferredEpisodeCount(entry.episodeCount, cached?.episodeCount),
+    genres: overrides?.genres ?? parseGenres(cached?.genres ?? null, entry.genres ?? []),
+  });
+
+  const groupNarutoSearchResults = (
+    rows: Awaited<ReturnType<typeof searchAnime>>,
+    cacheById: Map<string, typeof animeCache.$inferSelect>
+  ) => {
+    const grouped = new Map<
+      string,
+      ReturnType<typeof formatUpstreamSearchEntry> & { sortOrder: number }
+    >();
+
+    for (const entry of rows) {
+      const group = getSeriesGroupInfo(extractBaseName(entry.name), entry.name);
+      const sortOrder = narutoSearchOrder[group.key];
+      if (sortOrder === undefined) {
+        continue;
+      }
+
+      const formatted = formatUpstreamSearchEntry(entry, cacheById.get(entry.id), {
+        name: group.displayName,
+      });
+      const existing = grouped.get(group.key);
+
+      if (
+        !existing ||
+        formatted.episodeCount > existing.episodeCount ||
+        (!!formatted.thumbnail && !existing.thumbnail)
+      ) {
+        grouped.set(group.key, { ...formatted, sortOrder });
+      }
+    }
+
+    return Array.from(grouped.values())
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map(({ sortOrder, ...entry }) => entry);
+  };
 
   /** Group cached anime rows by series, applying proper display names */
   function groupBySeries(rows: typeof animeCache.$inferSelect[]) {
@@ -99,8 +188,46 @@ export async function animeRoutes(app: FastifyInstance) {
 
       const term = q.trim().slice(0, 100);
       const mode = validateMode(req.query.mode);
+      const isNarutoFamilySearch = /\b(naruto|nato|boruto)\b/i.test(term);
 
-      // Search local cache first
+      const upstream = isNarutoFamilySearch
+        ? (
+            await Promise.all(
+              [
+                "Road of Naruto",
+                "Naruto Shippuden",
+                "NARUTO -ナルト-",
+                "Boruto",
+              ].map((searchTerm) => searchAnime(searchTerm, mode, 1, 40))
+            )
+          ).flat()
+        : await searchAnime(term, mode);
+
+      const dedupedUpstream = Array.from(
+        new Map(upstream.map((entry) => [entry.id, entry])).values()
+      );
+
+      if (dedupedUpstream.length > 0) {
+        const cacheRows = db
+          .select()
+          .from(animeCache)
+          .where(inArray(animeCache.id, dedupedUpstream.map((entry) => entry.id)))
+          .all();
+        const cacheById = new Map(cacheRows.map((row) => [row.id, row]));
+
+        if (isNarutoFamilySearch) {
+          const narutoResults = groupNarutoSearchResults(dedupedUpstream, cacheById);
+          if (narutoResults.length > 0) {
+            return narutoResults;
+          }
+        }
+
+        return dedupedUpstream.map((entry) =>
+          formatUpstreamSearchEntry(entry, cacheById.get(entry.id))
+        );
+      }
+
+      // Fall back to the local cache when upstream search yields no results.
       const cached = db
         .select()
         .from(animeCache)
@@ -210,6 +337,7 @@ export async function animeRoutes(app: FastifyInstance) {
             .all()
         : [];
       const cacheById = new Map(cacheRows.map((row) => [row.id, row]));
+      const totalAvailable = await getAnimeCatalogTotal("sub");
 
       return {
         items: filtered.map((entry) => {
@@ -222,14 +350,18 @@ export async function animeRoutes(app: FastifyInstance) {
             imageUrl: cached?.imageUrl ?? entry.thumbnail,
             bannerUrl: cached?.bannerUrl ?? undefined,
             description: cached?.description ?? entry.description,
-            genres: cached?.genres ? JSON.parse(cached.genres) : entry.genres ?? [],
+            genres: parseGenres(cached?.genres ?? null, entry.genres ?? []),
             status: cached?.status ?? entry.status,
-            episodeCount: cached?.episodeCount ?? entry.episodeCount,
+            episodeCount: getPreferredEpisodeCount(
+              entry.episodeCount,
+              cached?.episodeCount
+            ),
             rating: cached?.rating ?? undefined,
           };
         }),
         page,
         hasMore: upstream.length === limit,
+        totalAvailable,
       };
     }
   );
