@@ -58,7 +58,10 @@ export interface WatchHistoryItem {
   animeId: string;
   animeName: string;
   animeImage?: string;
+  episodeImage?: string;
   episodeNumber: string;
+  episodeTitle?: string;
+  episodeDescription?: string;
   progress: number;
   duration: number;
   updatedAt: string;

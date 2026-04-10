@@ -63,6 +63,8 @@ const ANILIST_TRENDING_QUERY = `
 `;
 
 const TRENDING_TTL_MS = 60 * 60 * 1000;
+const TRENDING_FETCH_COUNT = 36;
+const TRENDING_RETURN_COUNT = 24;
 
 let trendingCache:
   | {
@@ -158,7 +160,7 @@ export async function getCurrentTrendingAnime() {
     },
     body: JSON.stringify({
       query: ANILIST_TRENDING_QUERY,
-      variables: { page: 1, perPage: 16 },
+      variables: { page: 1, perPage: TRENDING_FETCH_COUNT },
     }),
   });
 
@@ -232,7 +234,7 @@ export async function getCurrentTrendingAnime() {
     });
   }
 
-  const data = Array.from(deduped.values()).slice(0, 12);
+  const data = Array.from(deduped.values()).slice(0, TRENDING_RETURN_COUNT);
   trendingCache = {
     expiresAt: Date.now() + TRENDING_TTL_MS,
     data,

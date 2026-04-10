@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { db } from "../db/index.js";
 import { animeCache, watchHistory } from "../db/schema.js";
 import { eq, and, desc, inArray } from "drizzle-orm";
-import { extractBaseName } from "../services/anime-bridge.js";
+import { extractBaseName, getAnimeDetail } from "../services/anime-bridge.js";
 import {
   getSeriesGroupInfo,
   extractSeasonNumber,
@@ -15,7 +15,12 @@ import {
 
 export async function historyRoutes(app: FastifyInstance) {
   function withLatestAnimeMetadata<
-    T extends { animeId: string; animeName: string; animeImage?: string | null }
+    T extends {
+      animeId: string;
+      animeName: string;
+      animeImage?: string | null;
+      episodeImage?: string | null;
+    }
   >(items: T[]) {
     const cacheRows = items.length
       ? db
@@ -38,6 +43,47 @@ export async function historyRoutes(app: FastifyInstance) {
         animeImage: cached?.imageUrl ?? item.animeImage,
       };
     });
+  }
+
+  async function withEpisodeMetadata<
+    T extends {
+      id: number;
+      animeId: string;
+      episodeNumber: string;
+      episodeImage?: string | null;
+    }
+  >(items: T[]) {
+    const detailRequests = new Map<string, ReturnType<typeof getAnimeDetail>>();
+
+    return Promise.all(
+      items.map(async (item) => {
+        let detailRequest = detailRequests.get(item.animeId);
+        if (!detailRequest) {
+          detailRequest = getAnimeDetail(item.animeId).catch(() => null as any);
+          detailRequests.set(item.animeId, detailRequest);
+        }
+
+        const detail = await detailRequest;
+        const episodeDetail = detail?.episodeDetails?.find(
+          (episode) => episode.episode === item.episodeNumber
+        );
+        const episodeImage = episodeDetail?.image;
+
+        if (episodeImage && !item.episodeImage) {
+          db.update(watchHistory)
+            .set({ episodeImage })
+            .where(eq(watchHistory.id, item.id))
+            .run();
+        }
+
+        return {
+          ...item,
+          episodeImage: item.episodeImage ?? episodeImage,
+          episodeTitle: episodeDetail?.title,
+          episodeDescription: episodeDetail?.description,
+        };
+      })
+    );
   }
 
   // Get watch history for a profile
@@ -89,7 +135,9 @@ export async function historyRoutes(app: FastifyInstance) {
         return true;
       });
 
-      return withLatestAnimeMetadata(deduped.slice(0, 20)).map((h) => ({
+      const enriched = await withEpisodeMetadata(deduped.slice(0, 20));
+
+      return withLatestAnimeMetadata(enriched).map((h) => ({
         ...h,
         seriesName: getSeriesGroupInfo(
           extractBaseName(h.animeName),
@@ -107,6 +155,7 @@ export async function historyRoutes(app: FastifyInstance) {
       animeId: string;
       animeName: string;
       animeImage?: string;
+      episodeImage?: string;
       episodeNumber: string;
       progress: number;
       duration: number;
@@ -118,6 +167,7 @@ export async function historyRoutes(app: FastifyInstance) {
     const animeId = normalizeText(req.body?.animeId, 80);
     const animeName = normalizeText(req.body?.animeName, 180);
     const animeImage = normalizeOptionalText(req.body?.animeImage, 500);
+    const episodeImage = normalizeOptionalText(req.body?.episodeImage, 500);
     const episodeNumber = normalizeText(req.body?.episodeNumber, 20);
     const progress =
       typeof req.body?.progress === "number" && Number.isFinite(req.body.progress)
@@ -159,10 +209,17 @@ export async function historyRoutes(app: FastifyInstance) {
     if (existing) {
       const now = new Date();
       db.update(watchHistory)
-        .set({ progress: safeProgress, duration, updatedAt: now })
+        .set({ progress: safeProgress, duration, animeImage, episodeImage, updatedAt: now })
         .where(eq(watchHistory.id, existing.id))
         .run();
-      return { ...existing, progress: safeProgress, duration, updatedAt: now };
+      return {
+        ...existing,
+        progress: safeProgress,
+        duration,
+        animeImage,
+        episodeImage,
+        updatedAt: now,
+      };
     } else {
       return db
         .insert(watchHistory)
@@ -171,6 +228,7 @@ export async function historyRoutes(app: FastifyInstance) {
           animeId,
           animeName,
           animeImage,
+          episodeImage,
           episodeNumber,
           progress: safeProgress,
           duration,

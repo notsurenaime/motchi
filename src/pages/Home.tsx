@@ -3,8 +3,12 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import HeroBanner from "@/components/HeroBanner";
 import AnimeRow from "@/components/AnimeRow";
+import ContinueWatchingRow from "@/components/ContinueWatchingRow";
+import { useWatchlist } from "@/lib/useWatchlist";
 import { SkeletonHero, SkeletonRow } from "@/components/SkeletonCard";
 import type { CachedAnime } from "@/lib/types";
+
+const FEATURED_CATEGORY_COUNT = 12;
 
 interface HomeProps {
   profileId: number;
@@ -12,6 +16,7 @@ interface HomeProps {
 
 export default function Home({ profileId }: HomeProps) {
   const [heroIndex, setHeroIndex] = useState(0);
+  const { watchlistIds, toggleWatchlist } = useWatchlist(profileId);
 
   const { data: trending = [], isLoading: trendingLoading } = useQuery({
     queryKey: ["trending"],
@@ -68,16 +73,9 @@ export default function Home({ profileId }: HomeProps) {
 
       {/* Continue Watching */}
       {continueWatching.length > 0 && (
-        <AnimeRow
+        <ContinueWatchingRow
           title="Continue Watching"
-          items={continueWatching.map((h) => ({
-            id: h.animeId,
-            name: h.seriesName ?? h.animeName,
-            image: h.animeImage,
-            subtitle: `S${h.seasonNumber ?? 1} E${h.episodeNumber} · ${Math.floor(
-              (h.progress / h.duration) * 100
-            )}%`,
-          }))}
+          items={continueWatching}
         />
       )}
 
@@ -93,6 +91,13 @@ export default function Home({ profileId }: HomeProps) {
             image: a.imageUrl,
             episodeCount: a.episodeCount,
             rating: a.rating,
+            isWatchlisted: watchlistIds.has(a.id),
+            onWatchlistToggle: () =>
+              toggleWatchlist({
+                animeId: a.id,
+                animeName: a.name,
+                animeImage: a.imageUrl,
+              }),
           }))}
         />
       )}
@@ -100,10 +105,10 @@ export default function Home({ profileId }: HomeProps) {
       {/* By genre */}
       {!trendingLoading && trending.length > 0 && (
         <>
-          <GenreRow title="Action" genre="Action" trending={trending} />
-          <GenreRow title="Romance" genre="Romance" trending={trending} />
-          <GenreRow title="Fantasy" genre="Fantasy" trending={trending} />
-          <GenreRow title="Comedy" genre="Comedy" trending={trending} />
+          <GenreRow title="Action" genre="Action" trending={trending} watchlistIds={watchlistIds} onToggleWatchlist={toggleWatchlist} />
+          <GenreRow title="Romance" genre="Romance" trending={trending} watchlistIds={watchlistIds} onToggleWatchlist={toggleWatchlist} />
+          <GenreRow title="Fantasy" genre="Fantasy" trending={trending} watchlistIds={watchlistIds} onToggleWatchlist={toggleWatchlist} />
+          <GenreRow title="Comedy" genre="Comedy" trending={trending} watchlistIds={watchlistIds} onToggleWatchlist={toggleWatchlist} />
         </>
       )}
     </div>
@@ -114,10 +119,18 @@ function GenreRow({
   title,
   genre,
   trending,
+  watchlistIds,
+  onToggleWatchlist,
 }: {
   title: string;
   genre: string;
   trending: CachedAnime[];
+  watchlistIds: Set<string>;
+  onToggleWatchlist: (input: {
+    animeId: string;
+    animeName: string;
+    animeImage?: string;
+  }) => void;
 }) {
   const filtered = trending.filter(
     (a) => a.genres && a.genres.includes(genre)
@@ -126,12 +139,19 @@ function GenreRow({
   return (
     <AnimeRow
       title={title}
-      items={filtered.map((a) => ({
+      items={filtered.slice(0, FEATURED_CATEGORY_COUNT).map((a) => ({
         id: a.id,
         name: a.name,
         image: a.imageUrl,
         episodeCount: a.episodeCount,
         rating: a.rating,
+        isWatchlisted: watchlistIds.has(a.id),
+        onWatchlistToggle: () =>
+          onToggleWatchlist({
+            animeId: a.id,
+            animeName: a.name,
+            animeImage: a.imageUrl,
+          }),
       }))}
     />
   );

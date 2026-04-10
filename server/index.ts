@@ -16,8 +16,30 @@ import { downloadRoutes } from "./routes/downloads.js";
 import { streamRoutes } from "./routes/stream.js";
 import { watchlistRoutes } from "./routes/watchlist.js";
 import { prefetchPopularAnime } from "./services/prefetch.js";
+import { warmAnimeCatalogTotal } from "./services/anime-bridge.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const NODE_ENV = process.env.NODE_ENV ?? "development";
+const isProduction = NODE_ENV === "production";
+const configuredCorsOrigins = (process.env.CORS_ORIGIN ?? "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const defaultDevOrigins = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+];
+
+const allowedCorsOrigins = new Set(
+  configuredCorsOrigins.length > 0
+    ? configuredCorsOrigins
+    : isProduction
+      ? []
+      : defaultDevOrigins
+);
 
 const app = Fastify({
   logger: {
@@ -64,7 +86,18 @@ app.setErrorHandler(async (error, request, reply) => {
 });
 
 // CORS for dev
-await app.register(cors, { origin: true });
+await app.register(cors, {
+  origin: (origin, callback) => {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    callback(null, allowedCorsOrigins.has(origin));
+  },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+});
 
 // Detect if built frontend is available
 // __dirname in dev (tsx): <root>/server, in prod (compiled): <root>/dist/server
@@ -190,8 +223,8 @@ try {
   await app.listen({ port: PORT, host: "0.0.0.0" });
   app.log.info(`Motchi server running on http://localhost:${PORT}`);
 
-  // Start Cloudflare tunnel for remote access
-  if (process.env.NO_TUNNEL !== "1") {
+  // Start Cloudflare tunnel for remote access only when explicitly enabled.
+  if (process.env.ENABLE_TUNNEL === "1") {
     startTunnel();
   }
 
@@ -199,6 +232,8 @@ try {
   void prefetchPopularAnime().catch((error) => {
     app.log.error(error, "Background prefetch error");
   });
+
+  warmAnimeCatalogTotal("sub");
 } catch (err) {
   app.log.error(err);
   process.exit(1);

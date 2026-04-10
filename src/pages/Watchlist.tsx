@@ -1,45 +1,14 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Heart } from "lucide-react";
 import { Link } from "react-router-dom";
 import AnimeCard from "@/components/AnimeCard";
-import { api } from "@/lib/api";
-import type { WatchlistItem } from "@/lib/types";
+import { useWatchlist } from "@/lib/useWatchlist";
 
 interface WatchlistProps {
   profileId: number;
 }
 
 export default function Watchlist({ profileId }: WatchlistProps) {
-  const queryClient = useQueryClient();
-
-  const { data: watchlist = [], isLoading } = useQuery({
-    queryKey: ["watchlist", profileId],
-    queryFn: () => api.getWatchlist(profileId),
-    enabled: profileId > 0,
-  });
-
-  const removeFromWatchlist = useMutation({
-    mutationFn: (animeId: string) => api.removeFromWatchlist(profileId, animeId),
-    onMutate: async (animeId) => {
-      const queryKey = ["watchlist", profileId] as const;
-      await queryClient.cancelQueries({ queryKey });
-      const previousWatchlist = queryClient.getQueryData<WatchlistItem[]>(queryKey) ?? [];
-
-      queryClient.setQueryData<WatchlistItem[]>(
-        queryKey,
-        previousWatchlist.filter((entry) => entry.animeId !== animeId)
-      );
-
-      return { previousWatchlist };
-    },
-    onError: (_error, _animeId, context) => {
-      if (!context) return;
-      queryClient.setQueryData(["watchlist", profileId], context.previousWatchlist);
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["watchlist", profileId] });
-    },
-  });
+  const { watchlist, isLoading, toggleWatchlist } = useWatchlist(profileId);
 
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6">
@@ -83,7 +52,13 @@ export default function Watchlist({ profileId }: WatchlistProps) {
               image={item.animeImage ?? undefined}
               subtitle="Saved for later"
               isWatchlisted={true}
-              onWatchlistToggle={(animeId) => removeFromWatchlist.mutate(animeId)}
+              onWatchlistToggle={() =>
+                toggleWatchlist({
+                  animeId: item.animeId,
+                  animeName: item.animeName,
+                  animeImage: item.animeImage ?? undefined,
+                })
+              }
               className="w-full"
             />
           ))}

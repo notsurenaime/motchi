@@ -11,9 +11,9 @@ A self-hosted anime streaming server with a clean, modern UI. Built for personal
 - **Skip OP/ED** — Automatic opening and ending skip detection via AniSkip
 - **Sub/Dub Toggle** — Switch between sub and dub on any anime
 - **Watch Progress** — Automatically saves your position so you can pick up where you left off
-- **Continue Watching** — Homepage row shows your in-progress series
+- **Continue Watching** — Homepage row shows episode artwork, titles, descriptions, and resume progress
 - **Profiles** — Multiple profiles with optional PIN protection for family use
-- **Watchlist** — Save anime for later from any page
+- **Watchlist** — Save or remove anime from Home, Browse, detail pages, and the Watchlist view itself
 - **Device-Local Downloads** — Save episodes into browser storage for offline viewing on the same device, with grouped download management and retry/delete states
 - **Episode Metadata** — Episode artwork, titles, and descriptions on detail and downloads pages when upstream data is available
 - **Season Navigation** — Automatically groups and links related seasons
@@ -49,7 +49,7 @@ The app will be available at `http://localhost:3000`. The API server runs on por
 
 Offline downloads are stored in the browser using IndexedDB, so they only appear on the device and browser profile where the download was created.
 
-A Cloudflare tunnel starts automatically, giving you a public URL (printed in the terminal) for phone/remote access. Requires [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) to be installed. Set `NO_TUNNEL=1` to disable.
+A Cloudflare tunnel is disabled by default. To expose your server remotely, install [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) and set `ENABLE_TUNNEL=1`.
 
 ## Production Build
 
@@ -63,8 +63,8 @@ npm start
 # Or run directly with tsx (no build needed)
 PORT=3000 npx tsx server/index.ts
 
-# Disable the Cloudflare tunnel
-NO_TUNNEL=1 npm start
+# Enable the Cloudflare tunnel explicitly
+ENABLE_TUNNEL=1 npm start
 ```
 
 ## Docker
@@ -88,9 +88,17 @@ Access at `http://localhost:3001`.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `3001` | Server port |
-| `NO_TUNNEL` | — | Set to `1` to disable the Cloudflare tunnel |
+| `CORS_ORIGIN` | Dev localhost origins | Comma-separated origins allowed to call the API directly |
+| `ENABLE_TUNNEL` | `0` | Set to `1` to start the Cloudflare tunnel |
+| `TUNNEL_DOMAIN` | — | Optional named tunnel domain for log messages |
 
 Copy `.env.example` to `.env` to customize.
+
+## Security Notes
+
+- Local databases, downloads, and `.env` files are ignored by git and should stay untracked.
+- In production, the safest default is same-origin hosting: serve the frontend and API from the same Motchi process and leave `CORS_ORIGIN` unset.
+- Remote access is opt-in. Do not enable `ENABLE_TUNNEL=1` unless you intend to expose the instance beyond your local network.
 
 ## Project Structure
 

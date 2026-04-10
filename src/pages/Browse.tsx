@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import AnimeCard from "@/components/AnimeCard";
 import SkeletonCard from "@/components/SkeletonCard";
 import type { AnimeSearchResult, CachedAnime } from "@/lib/types";
+import { useWatchlist } from "@/lib/useWatchlist";
 
 function isSearchResult(anime: AnimeSearchResult | CachedAnime): anime is AnimeSearchResult {
   return "thumbnail" in anime;
@@ -26,7 +27,12 @@ const GENRES = [
   "Thriller",
 ];
 
-export default function Browse() {
+interface BrowseProps {
+  profileId: number;
+}
+
+export default function Browse({ profileId }: BrowseProps) {
+  const { watchlistIds, toggleWatchlist } = useWatchlist(profileId);
   const [searchParams, setSearchParams] = useSearchParams();
   const initialSearchQuery = searchParams.get("q") ?? "";
   const initialGenre = searchParams.get("genre") ?? "";
@@ -173,6 +179,14 @@ export default function Browse() {
                 image={getCardImage(anime)}
                 episodeCount={anime.episodeCount}
                 rating={"rating" in anime ? anime.rating : undefined}
+                isWatchlisted={watchlistIds.has(anime.id)}
+                onWatchlistToggle={() =>
+                  toggleWatchlist({
+                    animeId: anime.id,
+                    animeName: anime.name,
+                    animeImage: getCardImage(anime),
+                  })
+                }
                 className="w-full"
               />
             ))}

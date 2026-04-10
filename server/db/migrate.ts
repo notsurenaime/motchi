@@ -23,12 +23,19 @@ sqlite.exec(`
     cached_at INTEGER NOT NULL DEFAULT (unixepoch())
   );
 
+  CREATE TABLE IF NOT EXISTS anime_catalog_totals (
+    mode TEXT PRIMARY KEY,
+    total INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+
   CREATE TABLE IF NOT EXISTS watch_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
     anime_id TEXT NOT NULL,
     anime_name TEXT NOT NULL,
     anime_image TEXT,
+    episode_image TEXT,
     episode_number TEXT NOT NULL,
     progress REAL NOT NULL DEFAULT 0,
     duration REAL NOT NULL DEFAULT 0,
@@ -67,6 +74,10 @@ sqlite.exec(`
 // Add error_message column if missing (migration for existing DBs)
 try {
   sqlite.exec(`ALTER TABLE downloads ADD COLUMN error_message TEXT`);
+} catch { /* column already exists */ }
+
+try {
+  sqlite.exec(`ALTER TABLE watch_history ADD COLUMN episode_image TEXT`);
 } catch { /* column already exists */ }
 
 console.log("Database migrated successfully");

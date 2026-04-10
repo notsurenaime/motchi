@@ -30,7 +30,7 @@ export default function App() {
       <Layout onSwitchProfile={() => selectProfile(0)}>
         <Routes>
           <Route path="/" element={<Home profileId={profileId} />} />
-          <Route path="/browse" element={<Browse />} />
+          <Route path="/browse" element={<Browse profileId={profileId} />} />
           <Route path="/anime/:id" element={<Detail profileId={profileId} />} />
           <Route
             path="/watch/:id/:episode"

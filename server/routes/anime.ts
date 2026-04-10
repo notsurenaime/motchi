@@ -287,7 +287,7 @@ export async function animeRoutes(app: FastifyInstance) {
     const all = db.select().from(animeCache).all();
     return groupBySeries(all)
       .sort((a, b) => b.bestRating - a.bestRating)
-      .slice(0, 20)
+      .slice(0, 24)
       .map(formatGrouped);
   });
 
@@ -337,7 +337,9 @@ export async function animeRoutes(app: FastifyInstance) {
             .all()
         : [];
       const cacheById = new Map(cacheRows.map((row) => [row.id, row]));
-      const totalAvailable = await getAnimeCatalogTotal("sub");
+      const totalAvailable = await getAnimeCatalogTotal("sub", {
+        allowStale: true,
+      });
 
       return {
         items: filtered.map((entry) => {

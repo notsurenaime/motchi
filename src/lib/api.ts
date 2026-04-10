@@ -54,12 +54,17 @@ function mergeAbortSignals(
 async function apiFetch<T>(url: string, options?: ApiRequestOptions): Promise<T> {
   const { timeoutMs = DEFAULT_TIMEOUT_MS, signal, ...requestInit } = options ?? {};
   const merged = mergeAbortSignals(signal ?? undefined, timeoutMs);
+  const headers = new Headers(requestInit.headers ?? undefined);
+
+  if (requestInit.body != null && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
 
   try {
     const res = await fetch(getApiUrl(url), {
       ...requestInit,
       signal: merged.signal,
-      headers: { "Content-Type": "application/json", ...requestInit.headers },
+      headers,
     });
 
     if (!res.ok) {
@@ -170,6 +175,7 @@ export const api = {
     animeId: string;
     animeName: string;
     animeImage?: string;
+    episodeImage?: string;
     episodeNumber: string;
     progress: number;
     duration: number;
@@ -216,10 +222,10 @@ export const api = {
     }),
 
   removeFromWatchlist: (profileId: number, animeId: string) =>
-    apiFetch<{ deleted: boolean }>(`/profiles/${profileId}/watchlist/${animeId}`, {
+    apiFetch<{ deleted: boolean }>(`/profiles/${profileId}/watchlist/${encodeURIComponent(animeId)}`, {
       method: "DELETE",
     }),
 
   isInWatchlist: (profileId: number, animeId: string) =>
-    apiFetch<{ inWatchlist: boolean }>(`/profiles/${profileId}/watchlist/${animeId}`),
+    apiFetch<{ inWatchlist: boolean }>(`/profiles/${profileId}/watchlist/${encodeURIComponent(animeId)}`),
 };

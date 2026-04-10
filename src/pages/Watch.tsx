@@ -62,6 +62,10 @@ export default function Watch({ profileId }: WatchProps) {
   const existingProgress = history?.find(
     (h) => h.animeId === id && h.episodeNumber === episode
   );
+  const currentEpisodeDetail = useMemo(
+    () => anime?.episodeDetails?.find((detail) => detail.episode === episode),
+    [anime?.episodeDetails, episode]
+  );
 
   // Lock resume time so it's only captured once (prevents VideoPlayer re-renders)
   const [resumeTime, setResumeTime] = useState(0);
@@ -105,12 +109,13 @@ export default function Watch({ profileId }: WatchProps) {
         animeId: id,
         animeName: currentAnime.name,
         animeImage: currentAnime.thumbnail,
+        episodeImage: currentEpisodeDetail?.image,
         episodeNumber: episode,
         progress: current,
         duration,
       };
     },
-    [episode, id, profileId]
+    [currentEpisodeDetail?.image, episode, id, profileId]
   );
 
   const makeProgressSignature = useCallback(

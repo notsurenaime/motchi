@@ -30,6 +30,14 @@ export const animeCache = sqliteTable("anime_cache", {
     .$defaultFn(() => new Date()),
 });
 
+export const animeCatalogTotals = sqliteTable("anime_catalog_totals", {
+  mode: text("mode").primaryKey(),
+  total: integer("total").notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const watchHistory = sqliteTable("watch_history", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   profileId: integer("profile_id")
@@ -38,6 +46,7 @@ export const watchHistory = sqliteTable("watch_history", {
   animeId: text("anime_id").notNull(),
   animeName: text("anime_name").notNull(),
   animeImage: text("anime_image"),
+  episodeImage: text("episode_image"),
   episodeNumber: text("episode_number").notNull(),
   progress: real("progress").notNull().default(0), // seconds watched
   duration: real("duration").notNull().default(0), // total duration

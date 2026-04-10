@@ -5,6 +5,9 @@
  */
 
 import { getSeriesGroupInfo } from "./anime-names.js";
+import { db } from "../db/index.js";
+import { animeCatalogTotals } from "../db/schema.js";
+import { eq } from "drizzle-orm";
 
 const AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0";
@@ -29,9 +32,15 @@ const COUNT_SEASONS = ["Winter", "Spring", "Summer", "Fall"] as const;
 const COUNT_TYPES = ["TV", "Movie", "ONA", "OVA", "Special", "PV"] as const;
 const COUNT_START_YEAR = 1917;
 const COUNT_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
+const COUNT_STALE_FALLBACK_MS = 1000 * 60 * 60 * 24 * 30;
 
-let animeCatalogTotalCache: { total: number; expiresAt: number } | null = null;
-let animeCatalogTotalPromise: Promise<number> | null = null;
+type TranslationMode = "sub" | "dub";
+
+const animeCatalogTotalCache = new Map<
+  TranslationMode,
+  { total: number; expiresAt: number }
+>();
+const animeCatalogTotalPromises = new Map<TranslationMode, Promise<number>>();
 
 export interface AnimeSearchResult {
   id: string;
@@ -192,29 +201,97 @@ async function computeAnimeCatalogTotal(mode: "sub" | "dub" = "sub") {
   return ids.size;
 }
 
-export async function getAnimeCatalogTotal(mode: "sub" | "dub" = "sub") {
-  const now = Date.now();
-  if (animeCatalogTotalCache && animeCatalogTotalCache.expiresAt > now) {
-    return animeCatalogTotalCache.total;
+function loadPersistedAnimeCatalogTotal(mode: TranslationMode) {
+  return (
+    db
+      .select()
+      .from(animeCatalogTotals)
+      .where(eq(animeCatalogTotals.mode, mode))
+      .get() ?? null
+  );
+}
+
+function persistAnimeCatalogTotal(mode: TranslationMode, total: number) {
+  db.insert(animeCatalogTotals)
+    .values({ mode, total, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: animeCatalogTotals.mode,
+      set: { total, updatedAt: new Date() },
+    })
+    .run();
+}
+
+function startAnimeCatalogTotalRefresh(mode: TranslationMode) {
+  const existingPromise = animeCatalogTotalPromises.get(mode);
+  if (existingPromise) {
+    return existingPromise;
   }
 
-  if (animeCatalogTotalPromise) {
-    return animeCatalogTotalPromise;
-  }
-
-  animeCatalogTotalPromise = computeAnimeCatalogTotal(mode)
+  const refreshPromise = computeAnimeCatalogTotal(mode)
     .then((total) => {
-      animeCatalogTotalCache = {
+      animeCatalogTotalCache.set(mode, {
         total,
         expiresAt: Date.now() + COUNT_CACHE_TTL_MS,
-      };
+      });
+      persistAnimeCatalogTotal(mode, total);
       return total;
     })
     .finally(() => {
-      animeCatalogTotalPromise = null;
+      animeCatalogTotalPromises.delete(mode);
     });
 
-  return animeCatalogTotalPromise;
+  animeCatalogTotalPromises.set(mode, refreshPromise);
+  return refreshPromise;
+}
+
+export async function getAnimeCatalogTotal(
+  mode: TranslationMode = "sub",
+  options?: { allowStale?: boolean }
+) {
+  const allowStale = options?.allowStale ?? false;
+  const now = Date.now();
+  const cached = animeCatalogTotalCache.get(mode);
+  if (cached && cached.expiresAt > now) {
+    return cached.total;
+  }
+
+  const persisted = loadPersistedAnimeCatalogTotal(mode);
+  if (persisted) {
+    const updatedAt =
+      persisted.updatedAt instanceof Date
+        ? persisted.updatedAt.getTime()
+        : new Date(persisted.updatedAt).getTime();
+    const expiresAt = updatedAt + COUNT_CACHE_TTL_MS;
+    animeCatalogTotalCache.set(mode, {
+      total: persisted.total,
+      expiresAt,
+    });
+
+    if (expiresAt > now) {
+      return persisted.total;
+    }
+
+    if (allowStale && now - updatedAt <= COUNT_STALE_FALLBACK_MS) {
+      void startAnimeCatalogTotalRefresh(mode);
+      return persisted.total;
+    }
+  }
+
+  if (allowStale) {
+    if (cached) {
+      void startAnimeCatalogTotalRefresh(mode);
+      return cached.total;
+    }
+
+    void startAnimeCatalogTotalRefresh(mode);
+    return 0;
+  }
+
+  return startAnimeCatalogTotalRefresh(mode);
+}
+
+export function warmAnimeCatalogTotal(mode: TranslationMode = "sub") {
+  void getAnimeCatalogTotal(mode, { allowStale: true });
 }
 
 function resolveImageUrl(url?: string) {

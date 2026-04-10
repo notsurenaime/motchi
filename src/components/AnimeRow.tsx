@@ -11,6 +11,8 @@ interface AnimeRowProps {
     episodeCount?: number;
     rating?: number;
     subtitle?: string;
+    isWatchlisted?: boolean;
+    onWatchlistToggle?: () => void;
   }[];
 }
 
