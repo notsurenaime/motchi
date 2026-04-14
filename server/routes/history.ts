@@ -14,6 +14,19 @@ import {
 } from "../lib/validation.js";
 
 export async function historyRoutes(app: FastifyInstance) {
+  function parseHistoryBody(body: unknown) {
+    if (typeof body === "string") {
+      try {
+        const parsed = JSON.parse(body);
+        return typeof parsed === "object" && parsed !== null ? parsed : null;
+      } catch {
+        return null;
+      }
+    }
+
+    return typeof body === "object" && body !== null ? body : null;
+  }
+
   function withLatestAnimeMetadata<
     T extends {
       animeId: string;
@@ -150,37 +163,29 @@ export async function historyRoutes(app: FastifyInstance) {
 
   // Update/insert watch progress
   app.post<{
-    Body: {
-      profileId: number;
-      animeId: string;
-      animeName: string;
-      animeImage?: string;
-      episodeImage?: string;
-      episodeNumber: string;
-      progress: number;
-      duration: number;
-    };
+    Body: unknown;
   }>("/api/history", async (req, reply) => {
-    const profileId = Number.isInteger(req.body?.profileId)
-      ? req.body.profileId
-      : null;
-    const animeId = normalizeText(req.body?.animeId, 80);
-    const animeName = normalizeText(req.body?.animeName, 180);
-    const animeImage = normalizeOptionalText(req.body?.animeImage, 500);
-    const episodeImage = normalizeOptionalText(req.body?.episodeImage, 500);
-    const episodeNumber = normalizeText(req.body?.episodeNumber, 20);
+    const body = parseHistoryBody(req.body);
+
+    const profileId = body?.profileId;
+    const normalizedProfileId = Number.isInteger(profileId) ? profileId : null;
+    const animeId = normalizeText(body?.animeId, 80);
+    const animeName = normalizeText(body?.animeName, 180);
+    const animeImage = normalizeOptionalText(body?.animeImage, 500);
+    const episodeImage = normalizeOptionalText(body?.episodeImage, 500);
+    const episodeNumber = normalizeText(body?.episodeNumber, 20);
     const progress =
-      typeof req.body?.progress === "number" && Number.isFinite(req.body.progress)
-        ? req.body.progress
+      typeof body?.progress === "number" && Number.isFinite(body.progress)
+        ? body.progress
         : null;
     const duration =
-      typeof req.body?.duration === "number" && Number.isFinite(req.body.duration)
-        ? req.body.duration
+      typeof body?.duration === "number" && Number.isFinite(body.duration)
+        ? body.duration
         : null;
 
     if (
-      !profileId ||
-      profileId <= 0 ||
+      !normalizedProfileId ||
+      normalizedProfileId <= 0 ||
       !animeId ||
       !animeName ||
       !episodeNumber ||
@@ -199,7 +204,7 @@ export async function historyRoutes(app: FastifyInstance) {
       .from(watchHistory)
       .where(
         and(
-          eq(watchHistory.profileId, profileId),
+          eq(watchHistory.profileId, normalizedProfileId),
           eq(watchHistory.animeId, animeId),
           eq(watchHistory.episodeNumber, episodeNumber)
         )
@@ -224,7 +229,7 @@ export async function historyRoutes(app: FastifyInstance) {
       return db
         .insert(watchHistory)
         .values({
-          profileId,
+          profileId: normalizedProfileId,
           animeId,
           animeName,
           animeImage,

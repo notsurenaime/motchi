@@ -10,7 +10,6 @@ import {
   SkipBack,
   Settings,
   ArrowLeft,
-  FastForward,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import Hls from "hls.js";
@@ -24,6 +23,7 @@ interface VideoPlayerProps {
   animeId: string;
   skipTimes?: SkipTime[];
   onProgress?: (current: number, duration: number) => void;
+  onDurationKnown?: (duration: number) => void;
   onNextEpisode?: () => void;
   onPrevEpisode?: () => void;
   initialTime?: number;
@@ -38,6 +38,7 @@ function VideoPlayer({
   animeId,
   skipTimes = [],
   onProgress,
+  onDurationKnown,
   onNextEpisode,
   onPrevEpisode,
   initialTime = 0,
@@ -50,6 +51,8 @@ function VideoPlayer({
   const hideControlsTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const hasInitialSeeked = useRef(false);
   const onProgressRef = useRef(onProgress);
+  const onDurationKnownRef = useRef(onDurationKnown);
+  const lastReportedDurationRef = useRef(0);
 
   // Lock props at mount to prevent re-renders from changing the source
   const lockedUrl = useRef(url);
@@ -82,6 +85,10 @@ function VideoPlayer({
   // Keep onProgress ref current
   useEffect(() => {
     onProgressRef.current = onProgress;
+  });
+
+  useEffect(() => {
+    onDurationKnownRef.current = onDurationKnown;
   });
 
   // Setup video source — HLS.js or direct mp4
@@ -292,12 +299,13 @@ function VideoPlayer({
     }
   };
 
-  const skipForward85 = () => {
-    const vid = videoRef.current;
-    if (vid) {
-      vid.currentTime = Math.min(vid.duration || 0, vid.currentTime + 85);
-    }
-  };
+  const handleSkipClick = useCallback(
+    (e: React.MouseEvent<HTMLButtonElement>) => {
+      e.stopPropagation();
+      handleSkip();
+    },
+    [activeSkip]
+  );
 
   // Stable event handlers that always read from videoRef.current
   // Throttle timeupdate to ~2/second to reduce re-renders
@@ -315,6 +323,26 @@ function VideoPlayer({
     const vid = videoRef.current;
     if (vid && isFinite(vid.duration) && vid.duration > 0) {
       setDuration(vid.duration);
+      const roundedDuration = Math.round(vid.duration);
+      if (lastReportedDurationRef.current !== roundedDuration) {
+        lastReportedDurationRef.current = roundedDuration;
+        onDurationKnownRef.current?.(roundedDuration);
+      }
+    }
+  }, []);
+
+  const getSkipLabel = useCallback((skip: SkipTime) => {
+    switch (skip.type) {
+      case "op":
+      case "mixed-op":
+        return "Intro";
+      case "ed":
+      case "mixed-ed":
+        return "Outro";
+      case "recap":
+        return "Recap";
+      default:
+        return "Segment";
     }
   }, []);
 
@@ -330,7 +358,8 @@ function VideoPlayer({
     if (vid && onProgressRef.current) {
       onProgressRef.current(vid.currentTime, vid.duration);
     }
-  }, []);
+    onNextEpisode?.();
+  }, [onNextEpisode]);
 
   const handlePlay = useCallback(() => {
     setPlaying(true);
@@ -456,6 +485,18 @@ function VideoPlayer({
         playsInline
       />
 
+      {activeSkip && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-20 z-20 flex justify-end px-4 sm:bottom-24 sm:px-6">
+          <button
+            type="button"
+            onClick={handleSkipClick}
+            className="pointer-events-auto cursor-pointer rounded-lg border border-white/15 bg-black/35 px-4 py-2.5 text-sm font-semibold text-white backdrop-blur-md transition-[background-color,border-color,transform] hover:border-rose-300/30 hover:bg-black/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black active:scale-[0.98] sm:px-5 sm:text-base"
+          >
+            Skip {getSkipLabel(activeSkip)}
+          </button>
+        </div>
+      )}
+
       {/* Controls overlay */}
       <div
         className={`absolute inset-0 transition-opacity duration-300 ${
@@ -482,33 +523,13 @@ function VideoPlayer({
         {!playing && (
           <div className="absolute inset-0 flex items-center justify-center">
             <button
+              type="button"
               onClick={() => videoRef.current?.play()}
-              className="w-20 h-20 rounded-full bg-rose-500/90 flex items-center justify-center hover:bg-rose-400 transition-colors"
+              className="flex h-20 w-20 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 transition-colors hover:bg-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
             >
               <Play size={36} className="text-white ml-1" fill="white" />
             </button>
           </div>
-        )}
-
-        {/* Skip button */}
-        {activeSkip && (
-          <button
-            onClick={handleSkip}
-            className="absolute bottom-20 sm:bottom-24 right-4 sm:right-6 bg-white/20 backdrop-blur-md hover:bg-white/30 text-white font-bold px-4 sm:px-6 py-2.5 sm:py-3 rounded-lg transition-colors border border-white/20 text-sm sm:text-base"
-          >
-            Skip {activeSkip.type === "op" ? "Opening" : "Ending"} →
-          </button>
-        )}
-
-        {/* Manual +85s skip */}
-        {!activeSkip && playing && skipTimes.length === 0 && (
-          <button
-            onClick={skipForward85}
-            className="absolute bottom-20 sm:bottom-24 right-4 sm:right-6 bg-white/10 backdrop-blur-md hover:bg-white/20 text-white text-xs sm:text-sm px-3 sm:px-4 py-2 rounded-lg transition-colors border border-white/10"
-          >
-            <FastForward size={14} className="inline mr-1" />
-            +85s
-          </button>
         )}
 
         {/* Bottom controls */}
@@ -549,16 +570,23 @@ function VideoPlayer({
                 safeDuration > 0
                   ? (st.startTime / safeDuration) * 100
                   : 0;
-              const widthPct =
+              const endPct =
                 safeDuration > 0
-                  ? ((st.endTime - st.startTime) / safeDuration) * 100
+                  ? (st.endTime / safeDuration) * 100
                   : 0;
               return (
-                <div
-                  key={i}
-                  className="absolute h-full bg-yellow-400/40 rounded-full"
-                  style={{ left: `${startPct}%`, width: `${widthPct}%` }}
-                />
+                <>
+                  <div
+                    key={`${i}-start`}
+                    className="absolute top-1/2 h-[80%] w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-rose-400/45"
+                    style={{ left: `${startPct}%` }}
+                  />
+                  <div
+                    key={`${i}-end`}
+                    className="absolute top-1/2 h-[80%] w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-rose-400/25"
+                    style={{ left: `${endPct}%` }}
+                  />
+                </>
               );
             })}
           </div>
@@ -567,24 +595,33 @@ function VideoPlayer({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 sm:gap-3">
               <button
+                type="button"
                 onClick={handlePlayPause}
-                className="text-white hover:text-rose-400 transition-colors p-1"
+                className="cursor-pointer rounded-full p-2 text-white transition-colors hover:bg-white/8 hover:text-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
               >
                 {playing ? <Pause size={22} /> : <Play size={22} />}
               </button>
 
               {onPrevEpisode && (
                 <button
-                  onClick={onPrevEpisode}
-                  className="text-white hover:text-rose-400 transition-colors p-1"
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPrevEpisode();
+                  }}
+                  className="cursor-pointer rounded-full p-2 text-white transition-colors hover:bg-white/8 hover:text-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
                 >
                   <SkipBack size={18} />
                 </button>
               )}
               {onNextEpisode && (
                 <button
-                  onClick={onNextEpisode}
-                  className="text-white hover:text-rose-400 transition-colors p-1"
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onNextEpisode();
+                  }}
+                  className="cursor-pointer rounded-full p-2 text-white transition-colors hover:bg-white/8 hover:text-rose-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
                 >
                   <SkipForward size={18} />
                 </button>

@@ -1,16 +1,39 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, useRef, useEffect, useState } from "react";
 import { api, getApiUrl } from "@/lib/api";
 import VideoPlayer from "@/components/VideoPlayer";
+import type { WatchHistoryItem } from "@/lib/types";
 
 interface WatchProps {
   profileId: number;
 }
 
+const RESUME_COMPLETION_THRESHOLD_SECONDS = 45;
+const RESUME_COMPLETION_THRESHOLD_RATIO = 0.98;
+
+function shouldResumeFromProgress(progress: number, duration: number): boolean {
+  if (!(progress > 0) || !(duration > 0)) {
+    return false;
+  }
+
+  const remaining = duration - progress;
+  return (
+    remaining > RESUME_COMPLETION_THRESHOLD_SECONDS &&
+    progress / duration < RESUME_COMPLETION_THRESHOLD_RATIO
+  );
+}
+
 export default function Watch({ profileId }: WatchProps) {
   const { id, episode } = useParams<{ id: string; episode: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [episodeDuration, setEpisodeDuration] = useState<number | null>(null);
+
+  useEffect(() => {
+    setEpisodeDuration(null);
+  }, [id, episode]);
 
   // Fetch anime details for episode list & navigation
   const { data: anime } = useQuery({
@@ -38,9 +61,14 @@ export default function Watch({ profileId }: WatchProps) {
 
   // Fetch skip times
   const { data: skipData } = useQuery({
-    queryKey: ["skip-times", anime?.name, episode],
-    queryFn: () => api.getSkipTimes(anime!.name, episode!),
-    enabled: !!anime?.name && !!episode,
+    queryKey: ["skip-times", anime?.name, episode, episodeDuration],
+    queryFn: () =>
+      api.getSkipTimes(
+        anime!.name,
+        episode!,
+        episodeDuration ?? undefined
+      ),
+    enabled: !!anime?.name && !!episode && episodeDuration !== null,
     staleTime: Infinity,
     gcTime: Infinity,
     refetchOnWindowFocus: false,
@@ -70,12 +98,29 @@ export default function Watch({ profileId }: WatchProps) {
   // Lock resume time so it's only captured once (prevents VideoPlayer re-renders)
   const [resumeTime, setResumeTime] = useState(0);
   const resumeTimeLocked = useRef(false);
+
   useEffect(() => {
-    if (!resumeTimeLocked.current && existingProgress?.progress && existingProgress.progress > 0) {
-      setResumeTime(existingProgress.progress);
-      resumeTimeLocked.current = true;
+    resumeTimeLocked.current = false;
+    setResumeTime(0);
+  }, [id, episode]);
+
+  useEffect(() => {
+    if (resumeTimeLocked.current) {
+      return;
     }
-  }, [existingProgress?.progress]);
+
+    if (
+      existingProgress?.progress &&
+      existingProgress.duration &&
+      shouldResumeFromProgress(existingProgress.progress, existingProgress.duration)
+    ) {
+      setResumeTime(existingProgress.progress);
+    } else {
+      setResumeTime(0);
+    }
+
+    resumeTimeLocked.current = true;
+  }, [existingProgress?.duration, existingProgress?.progress]);
 
   // Progress save — fire-and-forget fetch, no React state involved at all.
   // This avoids useMutation re-renders that were cascading into component remounts.
@@ -135,6 +180,30 @@ export default function Watch({ profileId }: WatchProps) {
     lastPersistedAtRef.current = Date.now();
   }, []);
 
+  const syncProgressCaches = useCallback(
+    (item: WatchHistoryItem) => {
+      queryClient.setQueryData<WatchHistoryItem[]>(
+        ["history", item.profileId],
+        (current = []) => {
+          const next = current.filter((entry) => entry.id !== item.id);
+          return [item, ...next].sort(
+            (left, right) =>
+              new Date(right.updatedAt).getTime() -
+              new Date(left.updatedAt).getTime()
+          );
+        }
+      );
+
+      void queryClient.invalidateQueries({
+        queryKey: ["history", item.profileId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["continue-watching", item.profileId],
+      });
+    },
+    [queryClient]
+  );
+
   const shouldSkipDuplicatePersist = useCallback((signature: string) => {
     return (
       lastPersistedSignatureRef.current === signature &&
@@ -174,7 +243,8 @@ export default function Watch({ profileId }: WatchProps) {
             pendingProgressRef.current = null;
             continue;
           }
-          await api.updateProgress(nextPayload);
+          const saved = await api.updateProgress(nextPayload);
+          syncProgressCaches(saved);
           markProgressPersisted(nextSignature);
           if (pendingProgressRef.current === nextPayload) {
             pendingProgressRef.current = null;
@@ -186,7 +256,13 @@ export default function Watch({ profileId }: WatchProps) {
         savingProgressRef.current = false;
       }
     },
-    [buildProgressPayload, makeProgressSignature, markProgressPersisted, shouldSkipDuplicatePersist]
+    [
+      buildProgressPayload,
+      makeProgressSignature,
+      markProgressPersisted,
+      shouldSkipDuplicatePersist,
+      syncProgressCaches,
+    ]
   );
 
   const flushProgressOnPageHide = useCallback(() => {
@@ -206,14 +282,15 @@ export default function Watch({ profileId }: WatchProps) {
     }
 
     try {
-      const body = JSON.stringify(payload);
-      const sent = navigator.sendBeacon(
-        getApiUrl("/history"),
-        new Blob([body], { type: "text/plain;charset=UTF-8" })
-      );
-      if (sent) {
-        markProgressPersisted(signature);
-      }
+      void fetch(getApiUrl("/history"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      });
+      markProgressPersisted(signature);
     } catch (error) {
       console.error("Failed to flush watch progress", error);
     }
@@ -260,9 +337,18 @@ export default function Watch({ profileId }: WatchProps) {
       flushProgressOnPageHide();
     };
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        flushProgressOnPageHide();
+      }
+    };
+
     window.addEventListener("pagehide", handlePageHide);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
+      flushProgressOnPageHide();
       window.removeEventListener("pagehide", handlePageHide);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [flushProgressOnPageHide]);
 
@@ -337,6 +423,11 @@ export default function Watch({ profileId }: WatchProps) {
         animeId={id!}
         skipTimes={skipData?.skipTimes}
         onProgress={handleProgress}
+        onDurationKnown={(nextDuration) => {
+          setEpisodeDuration((currentDuration) =>
+            currentDuration === nextDuration ? currentDuration : nextDuration
+          );
+        }}
         onNextEpisode={nextEp ? () => goToEpisode(nextEp) : undefined}
         onPrevEpisode={prevEp ? () => goToEpisode(prevEp) : undefined}
         initialTime={resumeTime}
